@@ -4,4 +4,7 @@
 tmp/
 .codex
 .venv/
+.uv-cache/
+.hf-cache/
 data/
+dumps/
