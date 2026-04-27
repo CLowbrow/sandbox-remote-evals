@@ -8,6 +8,7 @@ import modal
 APP_NAME = "enron-sandbox"
 POSTGRES_MAJOR = "18"
 DATABASE_NAME = "enron_embeddings"
+RUNTIME_DATABASE_USER = "root"
 DUMP_PATH = "/mnt/enron-pg/enron_embeddings.dump"
 MAILDIR_ROOT = "/mnt/enron-maildir/maildir"
 EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
@@ -35,14 +36,20 @@ def _install_runtime_helpers() -> None:
 #!/usr/bin/env bash
 set -euo pipefail
 
-if pg_isready -q -h /var/run/postgresql -d {DATABASE_NAME}; then
+if pg_isready -q -h /var/run/postgresql -d {DATABASE_NAME} -U postgres; then
   exit 0
 fi
 
-pg_ctlcluster {POSTGRES_MAJOR} main start
+if ! pg_ctlcluster {POSTGRES_MAJOR} main start; then
+  if pg_isready -q -h /var/run/postgresql -d {DATABASE_NAME} -U postgres; then
+    exit 0
+  fi
+  pg_ctlcluster {POSTGRES_MAJOR} main status || true
+  exit 1
+fi
 
 for _ in $(seq 1 60); do
-  if pg_isready -q -h /var/run/postgresql -d {DATABASE_NAME}; then
+  if pg_isready -q -h /var/run/postgresql -d {DATABASE_NAME} -U postgres; then
     exit 0
   fi
   sleep 0.5
@@ -84,6 +91,8 @@ def restore_postgres_dump() -> None:
                 "-u",
                 "postgres",
                 "psql",
+                "--username",
+                "postgres",
                 "--dbname",
                 DATABASE_NAME,
                 "--command",
@@ -112,6 +121,8 @@ def restore_postgres_dump() -> None:
                 "-u",
                 "postgres",
                 "psql",
+                "--username",
+                "postgres",
                 "--dbname",
                 DATABASE_NAME,
                 "--command",
@@ -124,10 +135,37 @@ def restore_postgres_dump() -> None:
                 "-u",
                 "postgres",
                 "psql",
+                "--username",
+                "postgres",
                 "--dbname",
                 DATABASE_NAME,
                 "--command",
                 "CHECKPOINT;",
+            ]
+        )
+        _run(
+            [
+                "sudo",
+                "-u",
+                "postgres",
+                "psql",
+                "--username",
+                "postgres",
+                "--dbname",
+                DATABASE_NAME,
+                "--command",
+                f"""
+do $$
+begin
+  if not exists (select 1 from pg_roles where rolname = '{RUNTIME_DATABASE_USER}') then
+    create role {RUNTIME_DATABASE_USER} login;
+  end if;
+end
+$$;
+grant connect on database {DATABASE_NAME} to {RUNTIME_DATABASE_USER};
+grant usage on schema public to {RUNTIME_DATABASE_USER};
+grant select on all tables in schema public to {RUNTIME_DATABASE_USER};
+""",
             ]
         )
     finally:
@@ -183,10 +221,11 @@ postgres_image = (
     )
     .env(
         {
-            "DATABASE_URL": f"postgresql:///{DATABASE_NAME}?host=/var/run/postgresql",
+            "DATABASE_URL": f"postgresql:///{DATABASE_NAME}?host=/var/run/postgresql&user={RUNTIME_DATABASE_USER}",
             "PGHOST": "/var/run/postgresql",
             "PGDATABASE": DATABASE_NAME,
-            "PGUSER": "postgres",
+            "PGUSER": RUNTIME_DATABASE_USER,
+            "ENRON_DATABASE_USER": RUNTIME_DATABASE_USER,
             "MAILDIR_ROOT": MAILDIR_ROOT,
             "ENRON_EMBEDDING_MODEL": EMBEDDING_MODEL,
             "HF_HOME": "/root/.cache/huggingface",

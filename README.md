@@ -345,7 +345,7 @@ selection once, which made it look like a rebuilt image was still using old code
 
 - In Modal, Postgres is started by `/usr/local/bin/start-enron-postgres`.
 - Runtime Postgres connection defaults to
-  `postgresql:///enron_embeddings?host=/var/run/postgresql`.
+  `postgresql:///enron_embeddings?host=/var/run/postgresql&user=root`.
 - Local WSL testing defaults to `postgresql:///enron_embeddings` and assumes
   local Postgres is already running.
 - The maildir volume is mounted by `eval_volumes` at `/mnt/enron-maildir`; files
