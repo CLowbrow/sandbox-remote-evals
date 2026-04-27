@@ -123,12 +123,17 @@ print(json.dumps([float(value) for value in embedding]))
   return JSON.parse(result.stdout);
 }
 
-async function searchEmailChunks({ query, limit }, rootSpan) {
+async function searchEmailChunks({ query, limit, context_radius: contextRadius }, rootSpan) {
   const dbUrl = databaseUrl();
   try {
     startPostgres(rootSpan);
     const safeLimit = Math.max(1, Math.min(Number.parseInt(limit ?? 10, 10) || 10, 20));
-    console.info(`Searching Enron chunks. query=${JSON.stringify(query)} limit=${safeLimit} database_url=${dbUrl}`);
+    const parsedContextRadius = Number.parseInt(contextRadius ?? 1, 10);
+    const safeContextRadius = Number.isNaN(parsedContextRadius) ? 1 : Math.max(0, Math.min(parsedContextRadius, 3));
+    const candidateLimit = safeLimit * 8;
+    console.info(
+      `Searching Enron chunks. query=${JSON.stringify(query)} limit=${safeLimit} context_radius=${safeContextRadius} database_url=${dbUrl}`,
+    );
 
     const vector = vectorLiteral(embedQuery(query));
     const client = new Client(pgConfig());
@@ -136,44 +141,90 @@ async function searchEmailChunks({ query, limit }, rootSpan) {
     try {
       const { rows } = await client.query(
         `
+          with nearest_chunks as (
+            select
+              c.email_id,
+              c.chunk_index,
+              c.embedding <=> $1::vector as distance
+            from enron_email_chunks c
+            order by c.embedding <=> $1::vector
+            limit $3
+          ),
+          best_email_matches as (
+            select distinct on (email_id)
+              email_id,
+              chunk_index as matched_chunk_index,
+              distance
+            from nearest_chunks
+            order by email_id, distance
+          ),
+          top_email_matches as (
+            select *
+            from best_email_matches
+            order by distance
+            limit $2
+          )
           select
             e.source_file,
             e.sent_at,
             e.sender,
             e.recipients,
             e.subject,
-            c.chunk_index,
-            left(c.content, 1600) as excerpt,
-            c.embedding <=> $1::vector as distance
-          from enron_email_chunks c
-          join enron_emails e on e.id = c.email_id
-          order by c.embedding <=> $1::vector
-          limit $2
+            m.matched_chunk_index,
+            m.distance,
+            ctx.chunk_index as context_chunk_index,
+            ctx.content as context_content
+          from top_email_matches m
+          join enron_emails e on e.id = m.email_id
+          join enron_email_chunks ctx
+            on ctx.email_id = m.email_id
+           and ctx.chunk_index between m.matched_chunk_index - $4 and m.matched_chunk_index + $4
+          order by m.distance, e.source_file, ctx.chunk_index
         `,
-        [vector, safeLimit],
+        [vector, safeLimit, candidateLimit, safeContextRadius],
       );
 
-      const results = rows.map((row) => ({
-        source_file: row.source_file,
-        sent_at: row.sent_at instanceof Date ? row.sent_at.toISOString() : row.sent_at,
-        sender: row.sender,
-        recipients: (row.recipients || []).slice(0, 12),
-        subject: row.subject,
-        chunk_index: row.chunk_index,
-        excerpt: row.excerpt,
-        distance: Number(row.distance),
-      }));
+      const resultsBySource = new Map();
+      for (const row of rows) {
+        if (!resultsBySource.has(row.source_file)) {
+          resultsBySource.set(row.source_file, {
+            source_file: row.source_file,
+            sent_at: row.sent_at instanceof Date ? row.sent_at.toISOString() : row.sent_at,
+            sender: row.sender,
+            recipients: (row.recipients || []).slice(0, 12),
+            subject: row.subject,
+            matched_chunk_index: row.matched_chunk_index,
+            context_start_chunk_index: row.context_chunk_index,
+            context_end_chunk_index: row.context_chunk_index,
+            context_radius: safeContextRadius,
+            distance: Number(row.distance),
+            context_chunks: [],
+          });
+        }
+
+        const result = resultsBySource.get(row.source_file);
+        result.context_start_chunk_index = Math.min(result.context_start_chunk_index, row.context_chunk_index);
+        result.context_end_chunk_index = Math.max(result.context_end_chunk_index, row.context_chunk_index);
+        result.context_chunks.push({
+          chunk_index: row.context_chunk_index,
+          content: row.context_content,
+        });
+      }
+
+      const results = Array.from(resultsBySource.values());
       rootSpan.log({
         metadata: {
           search_email_chunks: {
             query,
             limit: safeLimit,
+            context_radius: safeContextRadius,
+            candidate_limit: candidateLimit,
             result_count: results.length,
             database_url: dbUrl,
           },
         },
       });
-      console.info(`Enron search returned ${results.length} chunks.`);
+      console.info(`Enron search returned ${results.length} grouped email results.`);
       return JSON.stringify(results);
     } finally {
       await client.end();
@@ -218,10 +269,12 @@ async function task(input, hooks) {
 
   const searchTool = tool({
     name: "search_email_chunks",
-    description: "Search Enron email chunks by semantic similarity and return source metadata plus excerpts.",
+    description:
+      "Search Enron email chunks by semantic similarity and return grouped email results with neighboring chunk context.",
     parameters: z.object({
       query: z.string(),
       limit: z.number().int().min(1).max(20).default(10),
+      context_radius: z.number().int().min(0).max(3).default(1),
     }),
     async execute(args) {
       return searchEmailChunks(args, hooks.span);
@@ -234,13 +287,14 @@ async function task(input, hooks) {
     instructions: [
       "Answer questions about the Enron email corpus. Use search_email_chunks before answering.",
       "The search tool is semantic vector search over chunks built from Subject, From, the first To recipients, and body text.",
+      "Search results are grouped by source email, not by isolated chunk. Each result includes the best matched chunk index plus nearby ordered context_chunks.",
       "The search string is embedded as one vector, not parsed as a query language. Extra filler words can dilute the important concept.",
       "Use compact passage-like phrases or exact likely words that would appear in matching emails. For lexical concepts, prefer sharp queries like 'joke' or 'jokes' over broad paraphrases like 'emails that include jokes or humor, people telling jokes or forwarding jokes'.",
       "Do not use Boolean, regex, SQL, OR/AND lists, quoted synonym lists, wildcard syntax, or long keyword chains.",
       "Prefer one concise query, for example: 'joke' for joke-finding tasks, or 'California energy prices joke' when the question needs both topic and tone.",
       "If the first search is weak, make at most one follow-up search with a meaningfully different natural-language phrasing or a narrower entity/time/topic. Do not issue many near-duplicate searches.",
-      "Use metadata in the returned results, including source_file, sender, recipients, subject, sent_at, and chunk_index, to reason about provenance. Do not invent metadata filters that the tool does not support.",
-      "Ground the answer in returned email excerpts and include source_file values for important claims.",
+      "Use metadata in the returned results, including source_file, sender, recipients, subject, sent_at, matched_chunk_index, and context chunk indexes, to reason about provenance. Do not invent metadata filters that the tool does not support.",
+      "Ground the answer in returned context_chunks and include source_file values for important claims.",
       "If the retrieved evidence is weak or absent, say that directly.",
     ].join(" "),
     tools: [searchTool],
