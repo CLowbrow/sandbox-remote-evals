@@ -186,3 +186,65 @@ def run_eval():
     # Search root: /mnt/enron-maildir/maildir
     ...
 ```
+
+## Modal Postgres Image For Evals
+
+`modal_enron_sandbox.py` defines a Modal image with:
+
+- Python 3.12
+- Node.js and npm
+- PostgreSQL 18 from PGDG apt packages
+- `postgresql-18-pgvector`
+- the restored `enron_embeddings` database baked into the image filesystem
+
+The image build step mounts the existing `enron-pg` volume read-only at
+`/mnt/enron-pg`, restores `/mnt/enron-pg/enron_embeddings.dump` into a fresh
+Postgres 18 cluster, runs `ANALYZE` and `CHECKPOINT`, then stops Postgres. Later
+eval containers start from that image, so startup only needs to launch Postgres
+against the already-restored data directory.
+
+Build and verify:
+
+```bash
+UV_CACHE_DIR="$PWD/.uv-cache" uv run modal run modal_enron_sandbox.py
+```
+
+Build and print the Modal image ID for Braintrust:
+
+```bash
+UV_CACHE_DIR="$PWD/.uv-cache" uv run modal run modal_enron_sandbox.py::print_image_id
+```
+
+The healthcheck starts Postgres, checks row counts, verifies the pgvector
+extension and vector index, confirms the maildir volume is mounted, prints the
+Node version, and stops Postgres.
+
+Inside eval code, use both `postgres_image` and `eval_volumes` so Postgres starts
+from the restored image filesystem while the original maildir files are mounted
+read-only:
+
+```python
+import subprocess
+
+from modal_enron_sandbox import app, eval_volumes, postgres_image
+
+
+@app.function(image=postgres_image, volumes=eval_volumes)
+def run_eval():
+    subprocess.run(["start-enron-postgres"], check=True)
+
+    # Vector DB:
+    # postgresql:///enron_embeddings?host=/var/run/postgresql&user=postgres
+
+    # Maildir files:
+    # /mnt/enron-maildir/maildir
+```
+
+The maildir volume is still mounted separately and should be searched at:
+
+```text
+/mnt/enron-maildir/maildir
+```
+
+Large local `data/` and `dumps/` files are excluded from Modal build context by
+`.dockerignore`; the dump should come from the Modal volume, not local upload.

@@ -8,3 +8,4 @@ tmp/
 .hf-cache/
 data/
 dumps/
+__pycache__/

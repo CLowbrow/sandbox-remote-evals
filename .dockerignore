@@ -1,0 +1,8 @@
+.git
+.venv
+.uv-cache
+.hf-cache
+__pycache__
+*.pyc
+data
+dumps
