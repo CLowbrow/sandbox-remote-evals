@@ -9,10 +9,15 @@ embedding-backed retrieval against filesystem/ripgrep search.
 - `data/enron_mail.tar.gz` is the maildir tarball used for filesystem search.
 - Local embedding generation is implemented in `scripts/ingest_enron_embeddings.py`.
 - Postgres dump helper is implemented in `scripts/dump_postgres.sh`.
+- Modal image and Braintrust sandbox build logic is in `modal_enron_sandbox.py`.
+- The Braintrust Python eval is `evals/enron_email_agent.eval.py`.
+- Braintrust sandbox registration helper is `scripts/register_braintrust_sandbox.py`.
 - The default embedding model is `BAAI/bge-small-en-v1.5`, producing normalized
   384-dimensional vectors.
 - The maildir tarball was uploaded to a Modal v2 Volume named `enron-maildir` and
   extracted to `/maildir`.
+- The Postgres dump was uploaded to a Modal Volume named `enron-pg` as
+  `/enron_embeddings.dump`.
 
 ## Local Setup
 
@@ -29,6 +34,9 @@ Install dependencies:
 ```bash
 uv sync
 ```
+
+The project currently depends on Modal, Braintrust, OpenAI, OpenAI Agents SDK,
+psycopg, pgvector, sentence-transformers, and torch.
 
 For the local test database, make sure the `alex` Postgres role and target DB exist:
 
@@ -195,6 +203,9 @@ def run_eval():
 - Node.js and npm
 - PostgreSQL 18 from PGDG apt packages
 - `postgresql-18-pgvector`
+- Braintrust, OpenAI, OpenAI Agents SDK, psycopg, pgvector, sentence-transformers, torch
+- cached `BAAI/bge-small-en-v1.5` embedding model files
+- `evals/enron_email_agent.eval.py` copied to `/app/evals/enron_email_agent.eval.py`
 - the restored `enron_embeddings` database baked into the image filesystem
 
 The image build step mounts the existing `enron-pg` volume read-only at
@@ -214,6 +225,9 @@ Build and print the Modal image ID for Braintrust:
 ```bash
 UV_CACHE_DIR="$PWD/.uv-cache" uv run modal run modal_enron_sandbox.py::print_image_id
 ```
+
+This prints a final `im-...` image ID. Use the final printed image ID, not any
+intermediate image IDs shown in build logs.
 
 The healthcheck starts Postgres, checks row counts, verifies the pgvector
 extension and vector index, confirms the maildir volume is mounted, prints the
@@ -248,3 +262,93 @@ The maildir volume is still mounted separately and should be searched at:
 
 Large local `data/` and `dumps/` files are excluded from Modal build context by
 `.dockerignore`; the dump should come from the Modal volume, not local upload.
+
+## Braintrust Sandbox And Eval
+
+The current Braintrust eval uses the Python OpenAI Agents SDK. It defines one
+tool, `search_email_chunks`, which:
+
+- starts bundled Postgres when running inside the Modal image
+- embeds the dataset input question with `BAAI/bge-small-en-v1.5`
+- queries `enron_email_chunks` with pgvector cosine distance
+- returns source file, sender, recipients, subject, chunk index, excerpt, and distance
+
+The eval parameters are intentionally minimal:
+
+- `model`: OpenAI model for the agent, default `gpt-5-mini`
+
+The question must come from the Braintrust dataset row `input`. There is no
+`query` parameter anymore.
+
+The eval includes:
+
+- `setup_openai_agents(project_name="enron-email-agent")` for Braintrust tracing
+- Python logging around startup, DB URL selection, search query, result count, and tool errors
+- Braintrust span metadata for `model`, `query`, `database_url`, successful search details, and search errors
+
+Local smoke checks:
+
+```bash
+UV_CACHE_DIR="$PWD/.uv-cache" uv run python -m py_compile \
+  modal_enron_sandbox.py \
+  evals/enron_email_agent.eval.py \
+  scripts/register_braintrust_sandbox.py
+
+UV_CACHE_DIR="$PWD/.uv-cache" uv run braintrust eval \
+  evals/enron_email_agent.eval.py \
+  --list \
+  --no-send-logs
+```
+
+A full local run against WSL Postgres needs network access for OpenAI and
+Hugging Face if the embedding model is not already cached:
+
+```bash
+UV_CACHE_DIR="$PWD/.uv-cache" \
+OPENAI_AGENTS_DISABLE_TRACING=1 \
+uv run braintrust eval evals/enron_email_agent.eval.py \
+  --no-send-logs \
+  --no-progress-bars \
+  --terminate-on-failure
+```
+
+Register or update the Braintrust sandbox after building a new image:
+
+```bash
+BRAINTRUST_SNAPSHOT_REF="im-your-new-image-id" \
+UV_CACHE_DIR="$PWD/.uv-cache" \
+uv run python scripts/register_braintrust_sandbox.py
+```
+
+By default this registers:
+
+- project: `enron-email-agent`
+- sandbox name: `Enron Email Agent Sandbox`
+- entrypoint: `./evals/enron_email_agent.eval.py`
+- `if_exists`: `replace`
+
+Override the project or sandbox name if needed:
+
+```bash
+BRAINTRUST_SNAPSHOT_REF="im-your-new-image-id" \
+UV_CACHE_DIR="$PWD/.uv-cache" \
+uv run python scripts/register_braintrust_sandbox.py \
+  --project "your-project" \
+  --name "your-sandbox-name"
+```
+
+If Braintrust UI behavior looks stale after re-registering, create a new sandbox
+name and select that exact name in the UI. We saw the UI cache an older sandbox
+selection once, which made it look like a rebuilt image was still using old code.
+
+## Current Runtime Notes
+
+- In Modal, Postgres is started by `/usr/local/bin/start-enron-postgres`.
+- Runtime Postgres connection defaults to
+  `postgresql:///enron_embeddings?host=/var/run/postgresql`.
+- Local WSL testing defaults to `postgresql:///enron_embeddings` and assumes
+  local Postgres is already running.
+- The maildir volume is mounted by `eval_volumes` at `/mnt/enron-maildir`; files
+  live under `/mnt/enron-maildir/maildir`.
+- The current Braintrust eval only uses pgvector search. Filesystem/ripgrep
+  comparison still needs to be added to the eval.
