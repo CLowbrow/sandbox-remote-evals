@@ -234,8 +234,10 @@ async function task(input, hooks) {
     instructions: [
       "Answer questions about the Enron email corpus. Use search_email_chunks before answering.",
       "The search tool is semantic vector search over chunks built from Subject, From, the first To recipients, and body text.",
-      "Write natural-language search queries, not Boolean, regex, SQL, or keyword-operator queries. Do not use OR/AND lists, quoted synonym lists, wildcard syntax, or long keyword chains.",
-      "Prefer one concise query that states the underlying information need, for example: 'emails joking about California energy prices' instead of 'joke OR jokes OR funny OR lol'.",
+      "The search string is embedded as one vector, not parsed as a query language. Extra filler words can dilute the important concept.",
+      "Use compact passage-like phrases or exact likely words that would appear in matching emails. For lexical concepts, prefer sharp queries like 'joke' or 'jokes' over broad paraphrases like 'emails that include jokes or humor, people telling jokes or forwarding jokes'.",
+      "Do not use Boolean, regex, SQL, OR/AND lists, quoted synonym lists, wildcard syntax, or long keyword chains.",
+      "Prefer one concise query, for example: 'joke' for joke-finding tasks, or 'California energy prices joke' when the question needs both topic and tone.",
       "If the first search is weak, make at most one follow-up search with a meaningfully different natural-language phrasing or a narrower entity/time/topic. Do not issue many near-duplicate searches.",
       "Use metadata in the returned results, including source_file, sender, recipients, subject, sent_at, and chunk_index, to reason about provenance. Do not invent metadata filters that the tool does not support.",
       "Ground the answer in returned email excerpts and include source_file values for important claims.",
