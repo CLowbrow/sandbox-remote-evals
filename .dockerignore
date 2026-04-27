@@ -4,5 +4,6 @@
 .hf-cache
 __pycache__
 *.pyc
+node_modules
 data
 dumps

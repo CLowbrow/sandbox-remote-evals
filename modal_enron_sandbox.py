@@ -182,19 +182,26 @@ def download_embedding_model() -> None:
 
 postgres_image = (
     modal.Image.debian_slim(python_version="3.12")
+    .workdir("/app")
     .apt_install("ca-certificates", "curl", "gnupg", "sudo")
     .run_commands(
         (
             "install -d /usr/share/postgresql-common/pgdg && "
             "curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc "
             "-o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc && "
+            "install -d /etc/apt/keyrings && "
+            "curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key "
+            "| gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg && "
             ". /etc/os-release && "
             'echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] '
             'https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" '
             "> /etc/apt/sources.list.d/pgdg.list && "
+            'echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] '
+            'https://deb.nodesource.com/node_22.x nodistro main" '
+            "> /etc/apt/sources.list.d/nodesource.list && "
             "apt-get update && "
             "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "
-            "nodejs npm postgresql-18 postgresql-18-pgvector postgresql-client-18 && "
+            "nodejs postgresql-18 postgresql-18-pgvector postgresql-client-18 && "
             "rm -rf /var/lib/apt/lists/*"
         )
     )
@@ -207,12 +214,14 @@ postgres_image = (
         "sentence-transformers>=3.4.1",
         "torch>=2.7.0",
     )
+    .add_local_file("package.json", "/app/package.json", copy=True)
+    .add_local_file("package-lock.json", "/app/package-lock.json", copy=True)
+    .run_commands("npm ci --omit=dev --no-audit --no-fund")
     .add_local_file(
-        "evals/enron_email_agent.eval.py",
-        "/app/evals/enron_email_agent.eval.py",
+        "evals/enron_email_agent.eval.js",
+        "/app/evals/enron_email_agent.eval.js",
         copy=True,
     )
-    .workdir("/app")
     .run_function(download_embedding_model, timeout=60 * 30)
     .run_function(
         restore_postgres_dump,
@@ -266,6 +275,7 @@ def postgres_healthcheck() -> dict[str, int | str]:
             text=True,
         ).strip()
         node_version = subprocess.check_output(["node", "--version"], text=True).strip()
+        braintrust_version = subprocess.check_output(["npx", "--no-install", "braintrust", "--version"], text=True).strip()
         return {
             "emails": emails,
             "chunks": chunks,
@@ -273,6 +283,7 @@ def postgres_healthcheck() -> dict[str, int | str]:
             "vector_indexes": vector_indexes,
             "maildir_sample": maildir_check,
             "node_version": node_version,
+            "braintrust_version": braintrust_version,
         }
     finally:
         _run_shell("stop-enron-postgres || true")

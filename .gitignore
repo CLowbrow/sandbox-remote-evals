@@ -9,3 +9,4 @@ tmp/
 data/
 dumps/
 __pycache__/
+node_modules/

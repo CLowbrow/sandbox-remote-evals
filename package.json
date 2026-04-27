@@ -1,0 +1,13 @@
+{
+  "name": "enron-email-agent-eval",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@braintrust/openai-agents": "0.1.2",
+    "@openai/agents": "0.8.5",
+    "braintrust": "^3.1.0",
+    "pg": "^8.16.3",
+    "zod": "^4.0.0"
+  }
+}

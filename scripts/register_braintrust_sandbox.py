@@ -3,13 +3,14 @@ from __future__ import annotations
 
 import argparse
 import os
-
-from braintrust import SandboxConfig, register_sandbox
+import subprocess
+import sys
+from pathlib import Path
 
 
 DEFAULT_PROJECT = "enron-email-agent"
 DEFAULT_SANDBOX_NAME = "Enron Email Agent Sandbox"
-DEFAULT_ENTRYPOINT = "./evals/enron_email_agent.eval.py"
+DEFAULT_ENTRYPOINT = "./evals/enron_email_agent.eval.js"
 
 
 def parse_args() -> argparse.Namespace:
@@ -30,14 +31,22 @@ def main() -> None:
     args = parse_args()
     if not args.snapshot_ref:
         raise SystemExit("Pass --snapshot-ref im-... or set BRAINTRUST_SNAPSHOT_REF.")
-    result = register_sandbox(
-        name=args.name,
-        project=args.project,
-        sandbox=SandboxConfig(provider="modal", snapshot_ref=args.snapshot_ref),
-        entrypoints=[args.entrypoint],
-        if_exists=args.if_exists,
-    )
-    print(result)
+    script = Path(__file__).with_suffix(".js")
+    command = [
+        "node",
+        str(script),
+        "--project",
+        args.project,
+        "--name",
+        args.name,
+        "--snapshot-ref",
+        args.snapshot_ref,
+        "--entrypoint",
+        args.entrypoint,
+        "--if-exists",
+        args.if_exists,
+    ]
+    raise SystemExit(subprocess.run(command).returncode)
 
 
 if __name__ == "__main__":
