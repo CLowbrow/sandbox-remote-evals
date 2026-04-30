@@ -3,6 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "scripts": {
+    "eval:list": "braintrust eval evals/enron_email_agent.eval.js --list --no-send-logs",
+    "eval:local": "OPENAI_AGENTS_DISABLE_TRACING=1 braintrust eval evals/enron_email_agent.eval.js --no-send-logs --no-progress-bars --terminate-on-failure",
+    "register-sandbox": "node scripts/register_braintrust_sandbox.js"
+  },
   "dependencies": {
     "@braintrust/openai-agents": "0.1.2",
     "@openai/agents": "0.8.5",

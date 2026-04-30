@@ -11,7 +11,7 @@ embedding-backed retrieval against filesystem/ripgrep search.
 - Postgres dump helper is implemented in `scripts/dump_postgres.sh`.
 - Modal image and Braintrust sandbox build logic is in `modal_enron_sandbox.py`.
 - The Braintrust JS eval is `evals/enron_email_agent.eval.js`.
-- Braintrust sandbox registration helper is `scripts/register_braintrust_sandbox.py`.
+- Braintrust sandbox registration helper is `scripts/register_braintrust_sandbox.js`.
 - The default embedding model is `BAAI/bge-small-en-v1.5`, producing normalized
   384-dimensional vectors.
 - The maildir tarball was uploaded to a Modal v2 Volume named `enron-maildir` and
@@ -41,9 +41,9 @@ Install JS eval dependencies:
 npm install
 ```
 
-The project currently depends on Modal, Braintrust, OpenAI, OpenAI Agents SDK,
-psycopg, pgvector, sentence-transformers, torch, `@openai/agents`, and
-`@braintrust/openai-agents`.
+The Python tools depend on Modal, psycopg, pgvector, sentence-transformers,
+torch, and tqdm. The JS eval depends on Braintrust, OpenAI Agents SDK,
+`@braintrust/openai-agents`, pg, and zod.
 
 For the local test database, make sure the `alex` Postgres role and target DB exist:
 
@@ -210,7 +210,7 @@ def run_eval():
 - Node.js 22 and npm
 - PostgreSQL 18 from PGDG apt packages
 - `postgresql-18-pgvector`
-- Python Braintrust/OpenAI support, psycopg, pgvector, sentence-transformers, torch
+- Python psycopg, pgvector, sentence-transformers, and torch support
 - Node packages from `package.json`, including `@openai/agents` and
   `@braintrust/openai-agents`
 - cached `BAAI/bge-small-en-v1.5` embedding model files
@@ -301,31 +301,23 @@ Local smoke checks:
 ```bash
 UV_CACHE_DIR="$PWD/.uv-cache" uv run python -m py_compile \
   modal_enron_sandbox.py \
-  scripts/register_braintrust_sandbox.py
+  scripts/ingest_enron_embeddings.py
 
-npx braintrust eval \
-  evals/enron_email_agent.eval.js \
-  --list \
-  --no-send-logs
+npm run eval:list
 ```
 
 A full local run against WSL Postgres needs network access for OpenAI and
 Hugging Face if the embedding model is not already cached:
 
 ```bash
-OPENAI_AGENTS_DISABLE_TRACING=1 \
-npx braintrust eval evals/enron_email_agent.eval.js \
-  --no-send-logs \
-  --no-progress-bars \
-  --terminate-on-failure
+npm run eval:local
 ```
 
 Register or update the Braintrust sandbox after building a new image:
 
 ```bash
 BRAINTRUST_SNAPSHOT_REF="im-your-new-image-id" \
-UV_CACHE_DIR="$PWD/.uv-cache" \
-uv run python scripts/register_braintrust_sandbox.py
+npm run register-sandbox
 ```
 
 By default this registers:
@@ -339,8 +331,7 @@ Override the project or sandbox name if needed:
 
 ```bash
 BRAINTRUST_SNAPSHOT_REF="im-your-new-image-id" \
-UV_CACHE_DIR="$PWD/.uv-cache" \
-uv run python scripts/register_braintrust_sandbox.py \
+npm run register-sandbox -- \
   --project "your-project" \
   --name "your-sandbox-name"
 ```

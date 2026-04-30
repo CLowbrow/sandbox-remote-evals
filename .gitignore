@@ -1,6 +1,8 @@
 .DS_Store
 .idea
 *.log
+*.pyc
+*:Zone.Identifier
 tmp/
 .codex
 .venv/
@@ -9,4 +11,5 @@ tmp/
 data/
 dumps/
 __pycache__/
+**/__pycache__/
 node_modules/

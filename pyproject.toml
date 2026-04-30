@@ -4,10 +4,7 @@ version = "0.1.0"
 description = "Local Enron email embedding generation and pgvector loading tools."
 requires-python = ">=3.12"
 dependencies = [
-    "braintrust>=0.16.0",
     "modal>=1.4.2",
-    "openai>=2.32.0",
-    "openai-agents>=0.14.6",
     "pgvector>=0.3.6",
     "psycopg[binary]>=3.2.6",
     "sentence-transformers>=3.4.1",
@@ -17,4 +14,3 @@ dependencies = [
 
 [tool.uv]
 package = false
-

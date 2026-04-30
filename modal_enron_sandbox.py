@@ -206,9 +206,6 @@ postgres_image = (
         )
     )
     .pip_install(
-        "braintrust==0.16.0",
-        "openai==2.32.0",
-        "openai-agents==0.14.6",
         "pgvector>=0.3.6",
         "psycopg[binary]>=3.2.6",
         "sentence-transformers>=3.4.1",
